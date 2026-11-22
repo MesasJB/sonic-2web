@@ -26,6 +26,14 @@
   #status { margin-top:16px; font-size:13px; color:var(--muted); min-height:18px; }
   progress { width:min(300px, 80%); height:8px; margin-top:12px; accent-color:var(--accent); }
 
+  /* Mods */
+  details#mods { max-width:420px; margin:22px auto 0; text-align:left; border:1px solid var(--line); border-radius:12px; padding:10px 14px; background:#0d0f16; }
+  details#mods[hidden] { display:none; }
+  details#mods summary { cursor:pointer; font-weight:600; }
+  details#mods .hint { color:var(--muted); font-size:12.5px; line-height:1.5; margin:10px 0 6px; }
+  details#mods label { display:flex; align-items:center; gap:10px; padding:7px 0; font-size:14px; cursor:pointer; }
+  details#mods input { width:17px; height:17px; accent-color:var(--accent); }
+
   /* Juego */
   #game { display:none; }
   #stage { background:#000; border-radius:10px; overflow:hidden; display:flex; align-items:center; justify-content:center; }
@@ -39,12 +47,8 @@
 
   .bar { display:flex; justify-content:space-between; align-items:center; margin-top:12px; gap:12px; flex-wrap:wrap; }
   .bar small { color:var(--muted); }
-  #diag { margin:10px 0 0; padding:10px; background:#0a0c12; border:1px solid var(--line); border-radius:8px;
-          color:#9fe3b0; font-size:12px; white-space:pre-wrap; user-select:text; }
   button.sec { background:#1c2032; color:var(--text); border:1px solid var(--line); padding:9px 16px; margin-left:6px; }
   button.sec:hover { background:#252a42; }
-  #fsBtnOLD { background:#1c2032; color:var(--text); border:1px solid var(--line); padding:9px 16px; }
-  #fsBtn:hover { background:#252a42; }
 </style>
 </head>
 <body>
@@ -53,10 +57,17 @@
     <div id="start">
       <div class="tag">Decompilación RSDKv4</div>
       <h1>Sonic <span>2</span></h1>
-      <p>Sonic the Hedgehog 2 corriendo directo en tu navegador. Al tocar Jugar se descarga el juego (unos 48 MB) y empieza solo.</p>
+      <p>Sonic the Hedgehog 2 corriendo directo en tu navegador. Al tocar Jugar se descarga el juego y empieza solo.</p>
       <button id="playBtn">▶ Jugar</button>
       <div><progress id="progress" hidden max="100" value="0"></progress></div>
       <div id="status"></div>
+
+      <details id="mods">
+        <summary>🎭 Mods</summary>
+        <div class="hint">Activá o desactivá los mods antes de tocar Jugar. Si ya estás jugando, recargá la página para cambiarlos.</div>
+        <div id="modList"></div>
+        <div class="hint" id="modMsg">Buscando mods…</div>
+      </details>
     </div>
 
     <div id="game">
@@ -64,19 +75,17 @@
         <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
       </div>
       <div class="bar">
-        <small>Hacé clic en el juego para que tome el teclado.</small>
+        <small>Hacé clic en el juego para que tome el teclado. <span id="modInfo"></span></small>
         <span>
-          <button id="delBtn" class="sec">🗑 Borrar guardado</button>
-          <button id="sndBtn" class="sec">🔊 Probar sonido</button>
           <button id="fsBtn" class="sec">⛶ Pantalla completa</button>
         </span>
       </div>
-      <pre id="diag" hidden></pre>
     </div>
 
   </div>
 
 <script>
+  var BUILD_VERSION = '4';   // subí este número si publicás una compilación nueva
   var statusEl   = document.getElementById('status');
   var progressEl = document.getElementById('progress');
   var playBtn    = document.getElementById('playBtn');
@@ -89,11 +98,18 @@
     e.preventDefault();
   }, false);
 
-
-  // --- Guardado persistente: el juego escribe SData.bin en memoria; lo copiamos al navegador ---
-  var SAVE_FILES = ['SData.bin', 'UData.bin'];
-  var saveInfo = { fs: false, lastSave: null, restored: [], error: null };
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  function lsDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
   function getFS() { return Module.FS || (typeof FS !== 'undefined' ? FS : null); }
+
+  // ---------------------------------------------------------------------------
+  // Guardado persistente. El juego escribe SData.bin / UData.bin en la memoria del
+  // navegador; los copiamos a localStorage y los devolvemos al abrir la página.
+  // Lo que hagas dentro del juego (guardar, borrar partida) se refleja solo.
+  // ---------------------------------------------------------------------------
+  var SAVE_FILES = ['SData.bin', 'UData.bin'];
+  var known = {};                       // archivos que ya existieron en esta sesión
   function bytesToB64(u8) {
     var bin = '', CH = 0x8000;
     for (var i = 0; i < u8.length; i += CH) bin += String.fromCharCode.apply(null, u8.subarray(i, i + CH));
@@ -106,28 +122,28 @@
   }
   function restoreSaves() {
     var fs = getFS();
-    saveInfo.fs = !!fs;
-    if (!fs) { saveInfo.error = 'FS no disponible: compilá con el compilar.bat nuevo'; return; }
+    if (!fs) return;
     SAVE_FILES.forEach(function (name) {
       try {
-        var b64 = localStorage.getItem('sonic2:' + name);
-        if (b64) { fs.writeFile('/' + name, b64ToBytes(b64)); saveInfo.restored.push(name); }
-      } catch (e) { saveInfo.error = 'restaurar ' + name + ': ' + e.message; }
+        var b64 = lsGet('sonic2:' + name);
+        if (b64) { fs.writeFile('/' + name, b64ToBytes(b64)); known[name] = true; }
+      } catch (e) {}
     });
   }
-  var noPersist = false;
   function persistSaves() {
     var fs = getFS();
-    if (!fs || noPersist) return;
+    if (!fs) return;
     SAVE_FILES.forEach(function (name) {
-      try {
-        var data = fs.readFile('/' + name);
-        var b64 = bytesToB64(data);
-        if (localStorage.getItem('sonic2:' + name) !== b64) {
-          localStorage.setItem('sonic2:' + name, b64);
-          saveInfo.lastSave = new Date().toLocaleTimeString();
-        }
-      } catch (e) { /* el archivo todavía no existe: no hay nada que guardar */ }
+      var data;
+      try { data = fs.readFile('/' + name); }
+      catch (e) {
+        // el juego borró el archivo: borramos también la copia guardada
+        if (known[name]) { lsDel('sonic2:' + name); known[name] = false; }
+        return;
+      }
+      known[name] = true;
+      var b64 = bytesToB64(data);
+      if (lsGet('sonic2:' + name) !== b64) lsSet('sonic2:' + name, b64);
     });
   }
   setInterval(persistSaves, 2000);
@@ -135,21 +151,67 @@
   window.addEventListener('pagehide', persistSaves);
   window.addEventListener('beforeunload', persistSaves);
 
-  // Guardamos las líneas de log relacionadas con audio para el diagnóstico
-  var logs = [];
-  function logLine(args) {
-    var t = Array.prototype.join.call(args, ' ');
-    if (/audio|sound|sfx|vorbis|ogg|sdl|error|unable|fail/i.test(t) && logs.length < 40) logs.push(t);
-  }
-  window.addEventListener('error', function (e) { logs.push('JS error: ' + e.message); });
-  window.addEventListener('unhandledrejection', function (e) { logs.push('Promise error: ' + (e.reason && e.reason.message || e.reason)); });
+  // ---------------------------------------------------------------------------
+  // Mods. Están dentro del juego, en /mods/<nombre>/ (con su mod.ini).
+  // Antes de arrancar el motor escribimos "Active=true/false" en cada mod.ini.
+  // ---------------------------------------------------------------------------
+  var modState = {};                    // nombre -> true/false
+  try { modState = JSON.parse(lsGet('sonic2:mods') || '{}') || {}; } catch (e) { modState = {}; }
 
+  function applyMods() {
+    var info = document.getElementById('modInfo');
+    var fs = getFS();
+    if (!fs) { if (info) info.textContent = '· Mods: no disponible'; return; }
+    var dirs = [];
+    try { dirs = fs.readdir('/mods').filter(function (n) { return n !== '.' && n !== '..'; }); } catch (e) { dirs = []; }
+    var report = [];
+    dirs.forEach(function (d) {
+      var path = '/mods/' + d + '/mod.ini', txt;
+      try { txt = fs.readFile(path, { encoding: 'utf8' }); } catch (e) { report.push(d + ' (sin mod.ini)'); return; }
+      var on = modState[d] !== false;                       // por defecto, activado
+      txt = txt.replace(/^[ \t]*Active[ \t]*=.*(\r?\n|$)/gmi, '');
+      fs.writeFile(path, 'Active=' + (on ? 'true' : 'false') + '\n' + txt);
+      report.push(d + (on ? ' (activo)' : ' (desactivado)'));
+    });
+    console.log('[mods] carpetas en /mods:', dirs);
+    if (info) info.textContent = report.length ? '· Mods: ' + report.join(', ') : '· Mods: ninguno incluido en esta compilación';
+  }
+
+  // Lista de mods para el panel (la genera compilar.bat en mods.json)
+  fetch('mods.json?v=' + BUILD_VERSION).then(function (r) { return r.ok ? r.json() : []; }).then(function (list) {
+    var msg = document.getElementById('modMsg');
+    if (!Array.isArray(list) || !list.length) {
+      msg.textContent = 'No hay mods incluidos en esta compilación. Poné la carpeta del mod dentro de "mods" y volvé a ejecutar compilar.bat.';
+      return;
+    }
+    msg.textContent = '';
+    var box = document.getElementById('modList');
+    list.forEach(function (name) {
+      var lab = document.createElement('label');
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = modState[name] !== false;
+      cb.addEventListener('change', function () {
+        modState[name] = cb.checked;
+        lsSet('sonic2:mods', JSON.stringify(modState));
+      });
+      lab.appendChild(cb);
+      lab.appendChild(document.createTextNode(name));
+      box.appendChild(lab);
+    });
+  }).catch(function () {
+    document.getElementById('modMsg').textContent = 'No se pudo leer mods.json (¿copiaste mods.json junto al index.html?).';
+  });
+
+  // ---------------------------------------------------------------------------
   // Configuración que Emscripten espera encontrar
+  // ---------------------------------------------------------------------------
   var Module = {
     canvas: canvas,
     preRun: [restoreSaves],
-    print: function () { logLine(arguments); console.log.apply(console, arguments); },
-    printErr: function () { logLine(arguments); console.warn.apply(console, arguments); },
+    locateFile: function (path) { return /\.wasm$/.test(path) ? path + '?v=' + BUILD_VERSION : path; },
+    print: function () { console.log.apply(console, arguments); },
+    printErr: function () { console.warn.apply(console, arguments); },
     totalDependencies: 0,
     setStatus: function (text) {
       if (!text) { statusEl.textContent = ''; progressEl.hidden = true; return; }
@@ -169,7 +231,9 @@
       Module.setStatus(left
         ? 'Preparando… (' + (this.totalDependencies - left) + '/' + this.totalDependencies + ')'
         : 'Listo');
-    }
+    },
+    // Se ejecuta con todos los archivos ya cargados y antes de que arranque el motor
+    onRuntimeInitialized: function () { applyMods(); }
   };
 
   // --- Audio: el navegador solo lo permite después de un clic ---
@@ -186,33 +250,26 @@
   });
 
   // --- Botón Jugar: el juego se carga DESPUÉS del clic, así el audio queda habilitado ---
+  function showGame() {
+    document.getElementById('start').style.display = 'none';
+    document.getElementById('game').style.display = 'block';
+    canvas.focus();
+    unlockAudio();
+  }
   playBtn.addEventListener('click', function () {
     playBtn.disabled = true;
     playBtn.textContent = 'Cargando…';
     Module.setStatus('Descargando…');
 
     var s = document.createElement('script');
-    s.src = 'index.js';
+    s.src = 'index.js?v=' + BUILD_VERSION;
     s.onerror = function () { statusEl.textContent = 'No se pudo cargar index.js'; playBtn.disabled = false; playBtn.textContent = '▶ Jugar'; };
     document.body.appendChild(s);
 
-    // Mostrar el juego cuando termine de descargar
     var wait = setInterval(function () {
-      if (window.__gameReady) {
-        clearInterval(wait);
-        document.getElementById('start').style.display = 'none';
-        document.getElementById('game').style.display = 'block';
-        canvas.focus();
-        unlockAudio();
-      }
+      if (window.__gameReady) { clearInterval(wait); showGame(); }
     }, 150);
-    // Respaldo: si por algún motivo no detectamos "Listo", mostramos el juego igual
-    setTimeout(function () {
-      clearInterval(wait);
-      document.getElementById('start').style.display = 'none';
-      document.getElementById('game').style.display = 'block';
-      unlockAudio();
-    }, 120000);
+    setTimeout(function () { clearInterval(wait); showGame(); }, 120000);   // respaldo
   });
 
   canvas.addEventListener('click', function () { canvas.focus(); unlockAudio(); });
@@ -227,53 +284,9 @@
     canvas.focus();
   });
 
-  // --- Diagnóstico y prueba de sonido ---
-  function getSdlCtx() {
-    return (window.__sonicAudio && window.__sonicAudio.ctx) ||
-           (Module.SDL2 && Module.SDL2.audioContext) ||
-           (typeof SDL !== 'undefined' && SDL.audioContext) || null;
-  }
-  function showDiag(extra) {
-    var ctx = getSdlCtx();
-    var lines = [
-      'Audio propio (Web Audio): ' + (window.__sonicAudio ? 'sí' : 'NO') + ' | SDL2 audio: ' + (Module.SDL2 ? 'sí' : 'no'),
-      'AudioContext del juego: ' + (ctx ? ctx.state + ' @ ' + ctx.sampleRate + ' Hz' : 'NO EXISTE (el juego no abrió audio)'),
-      'Pestaña silenciada por el navegador: revisá el ícono de la pestaña',
-      'Guardado: FS ' + (saveInfo.fs ? 'ok' : 'NO disponible') + ', restaurado: ' + (saveInfo.restored.join(', ') || 'nada') + ', último guardado: ' + (saveInfo.lastSave || 'ninguno todavía') + (saveInfo.error ? ' | ' + saveInfo.error : ''),
-      'Logs relacionados:'
-    ].concat(logs.length ? logs : ['  (ninguno)']);
-    if (extra) lines.unshift(extra);
-    var d = document.getElementById('diag');
-    d.hidden = false;
-    d.textContent = lines.join('\n');
-  }
-  document.getElementById('sndBtn').addEventListener('click', function () {
-    var msg;
-    try {
-      var AC = window.AudioContext || window.webkitAudioContext;
-      var c = new AC();
-      c.resume();
-      var o = c.createOscillator(), g = c.createGain();
-      g.gain.value = 0.15;
-      o.frequency.value = 440;
-      o.connect(g); g.connect(c.destination);
-      o.start(); o.stop(c.currentTime + 0.5);
-      msg = 'Prueba: tendrías que haber escuchado un pitido de medio segundo. Si NO lo oíste, el problema es de tu PC/navegador (volumen, pestaña silenciada, salida de audio).';
-    } catch (e) { msg = 'Falló la prueba de audio del navegador: ' + e.message; }
-    unlockAudio();
-    showDiag(msg);
-  });
-
-  document.getElementById('delBtn').addEventListener('click', function () {
-    if (!confirm('¿Borrar la partida guardada? No se puede deshacer.')) return;
-    noPersist = true;
-    SAVE_FILES.forEach(function (n) { localStorage.removeItem('sonic2:' + n); });
-    location.reload();
-  });
-
   // Que las flechas y el espacio no hagan scroll en la página
   window.addEventListener('keydown', function (e) {
-    if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].indexOf(e.key) > -1) e.preventDefault();
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].indexOf(e.key) > -1) e.preventDefault();
   }, { passive: false });
 </script>
 </body>

@@ -1,6 +1,6 @@
 @echo off
 setlocal
-rem ===== Compilador de Sonic 2 para navegador =====
+rem ===== Compilador de Sonic 2 para navegador (con soporte de mods) =====
 rem Asume que Emscripten esta en C:\Users\shit3\emsdk
 call C:\Users\shit3\emsdk\emsdk_env.bat
 cd /d "%~dp0"
@@ -15,11 +15,38 @@ if not exist Data.rsdk (
 
 if not exist wasm mkdir wasm
 
+rem --- Mods: cada carpeta dentro de "mods" tiene que tener su mod.ini ---
+set "MODFLAG="
+set /a MODOK=0
+if exist mods (
+  echo.
+  echo Mods encontrados en la carpeta mods:
+  for /d %%D in (mods\*) do (
+    if exist "%%D\mod.ini" (
+      echo    OK     %%D
+      set /a MODOK+=1
+    ) else (
+      echo    FALTA mod.ini en %%D
+      if exist "%%D\%%~nxD\mod.ini" echo           Parece que hay una carpeta dentro de otra: movela un nivel arriba.
+    )
+  )
+  set "MODFLAG=--preload-file mods"
+  powershell -NoProfile -Command "ConvertTo-Json -InputObject @(Get-ChildItem -Directory mods | ForEach-Object Name) -Compress | Set-Content -Encoding ascii wasm\mods.json"
+) else (
+  echo.
+  echo No hay carpeta "mods": se compila SIN mods.
+  >wasm\mods.json echo []
+)
+echo.
+echo Contenido de wasm\mods.json:
+type wasm\mods.json
+echo.
+
 echo.
 echo Compilando... la primera vez tarda unos minutos.
 echo.
 
-call em++ -std=c++17 -O2 -ftrivial-auto-var-init=zero -fno-strict-aliasing -fwrapv RSDKv4/Animation.cpp RSDKv4/Audio.cpp RSDKv4/Collision.cpp RSDKv4/Debug.cpp RSDKv4/Drawing.cpp RSDKv4/Ini.cpp RSDKv4/Input.cpp RSDKv4/main.cpp RSDKv4/Math.cpp RSDKv4/Object.cpp RSDKv4/Palette.cpp RSDKv4/PauseMenu.cpp RSDKv4/Reader.cpp RSDKv4/RetroEngine.cpp RSDKv4/RetroGameLoop.cpp RSDKv4/Scene.cpp RSDKv4/Scene3D.cpp RSDKv4/Script.cpp RSDKv4/Sprite.cpp RSDKv4/String.cpp RSDKv4/Text.cpp RSDKv4/Userdata.cpp -o wasm/index.js -lm --bind -s USE_SDL=2 -s USE_SDL_IMAGE=2 -s SDL2_IMAGE_FORMATS=["png"] -s USE_OGG=1 -s USE_VORBIS=1 -s TOTAL_MEMORY=60MB -s ALLOW_MEMORY_GROWTH=1 -s FORCE_FILESYSTEM=1 -s EXPORTED_RUNTIME_METHODS=FS --preload-file Data.rsdk
+call em++ -std=c++17 -O2 -ftrivial-auto-var-init=zero -fno-strict-aliasing -fwrapv RSDKv4/Animation.cpp RSDKv4/Audio.cpp RSDKv4/Collision.cpp RSDKv4/Debug.cpp RSDKv4/Drawing.cpp RSDKv4/Ini.cpp RSDKv4/Input.cpp RSDKv4/main.cpp RSDKv4/Math.cpp RSDKv4/Object.cpp RSDKv4/Palette.cpp RSDKv4/PauseMenu.cpp RSDKv4/Reader.cpp RSDKv4/RetroEngine.cpp RSDKv4/RetroGameLoop.cpp RSDKv4/Scene.cpp RSDKv4/Scene3D.cpp RSDKv4/Script.cpp RSDKv4/Sprite.cpp RSDKv4/String.cpp RSDKv4/Text.cpp RSDKv4/Userdata.cpp -o wasm/index.js -lm --bind -s USE_SDL=2 -s USE_SDL_IMAGE=2 -s SDL2_IMAGE_FORMATS=["png"] -s USE_OGG=1 -s USE_VORBIS=1 -s TOTAL_MEMORY=60MB -s ALLOW_MEMORY_GROWTH=1 -s FORCE_FILESYSTEM=1 -s EXPORTED_RUNTIME_METHODS=FS --preload-file Data.rsdk %MODFLAG%
 
 if errorlevel 1 (
   echo.
