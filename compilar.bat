@@ -1,8 +1,20 @@
 @echo off
 setlocal
 rem ===== Compilador de Sonic 2 para navegador (con soporte de mods) =====
-rem Asume que Emscripten esta en C:\Users\shit3\emsdk
-call C:\Users\shit3\emsdk\emsdk_env.bat
+rem Busca Emscripten en varios lugares (cambia o agrega rutas si lo instalaste en otro lado)
+set "EMENV="
+for %%P in ("%~dp0emsdk" "D:\emsdk" "%USERPROFILE%\emsdk" "C:\emsdk" "C:\Users\shit3\emsdk") do (
+  if not defined EMENV if exist "%%~P\emsdk_env.bat" set "EMENV=%%~P\emsdk_env.bat"
+)
+if not defined EMENV (
+  echo.
+  echo ERROR: no encuentro Emscripten ^(emsdk^) en esta PC.
+  echo Instalalo en D:\emsdk siguiendo los pasos que te pase y volve a ejecutar este archivo.
+  pause
+  exit /b 1
+)
+echo Usando Emscripten de: %EMENV%
+call "%EMENV%"
 cd /d "%~dp0"
 
 if not exist Data.rsdk (
