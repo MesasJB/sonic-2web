@@ -17,29 +17,22 @@ if not exist wasm mkdir wasm
 
 rem --- Mods: cada carpeta dentro de "mods" tiene que tener su mod.ini ---
 set "MODFLAG="
-set /a MODOK=0
 if exist mods (
   echo.
   echo Mods encontrados en la carpeta mods:
   for /d %%D in (mods\*) do (
     if exist "%%D\mod.ini" (
       echo    OK     %%D
-      set /a MODOK+=1
     ) else (
       echo    FALTA mod.ini en %%D
       if exist "%%D\%%~nxD\mod.ini" echo           Parece que hay una carpeta dentro de otra: movela un nivel arriba.
     )
   )
   set "MODFLAG=--preload-file mods"
-  powershell -NoProfile -Command "ConvertTo-Json -InputObject @(Get-ChildItem -Directory mods | ForEach-Object Name) -Compress | Set-Content -Encoding ascii wasm\mods.json"
 ) else (
   echo.
   echo No hay carpeta "mods": se compila SIN mods.
-  >wasm\mods.json echo []
 )
-echo.
-echo Contenido de wasm\mods.json:
-type wasm\mods.json
 echo.
 
 echo.

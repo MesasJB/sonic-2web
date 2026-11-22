@@ -3,7 +3,7 @@
 
 #define SPRITESHEETS_MAX (16)
 #define SURFACE_MAX      (24)
-#define GFXDATA_MAX      (0x200000)
+#define GFXDATA_MAX      (0x800000) /* WEB: 8 MiB (antes 2 MiB) para que entren los sprites grandes de los mods */
 
 #define BLENDTABLE_YSIZE (0x100)
 #define BLENDTABLE_XSIZE (0x20)
