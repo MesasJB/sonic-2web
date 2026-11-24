@@ -26,13 +26,6 @@
   #status { margin-top:16px; font-size:13px; color:var(--muted); min-height:18px; }
   progress { width:min(300px, 80%); height:8px; margin-top:12px; accent-color:var(--accent); }
 
-  /* Mods */
-  details#mods { max-width:420px; margin:22px auto 0; text-align:left; border:1px solid var(--line); border-radius:12px; padding:10px 14px; background:#0d0f16; }
-  details#mods[hidden] { display:none; }
-  details#mods summary { cursor:pointer; font-weight:600; }
-  details#mods .hint { color:var(--muted); font-size:12.5px; line-height:1.5; margin:10px 0 6px; }
-  details#mods label { display:flex; align-items:center; gap:10px; padding:7px 0; font-size:14px; cursor:pointer; }
-  details#mods input { width:17px; height:17px; accent-color:var(--accent); }
 
   /* Juego */
   #game { display:none; }
@@ -44,6 +37,15 @@
   #stage:fullscreen canvas#canvas, #stage:-webkit-full-screen canvas#canvas {
     width:100vw !important; height:100vh !important; aspect-ratio:auto; object-fit:contain;
   }
+
+
+  /* Aviso si el juego se detiene */
+  #crash { display:none; position:absolute; inset:0; z-index:5; background:rgba(8,9,13,.94); padding:16px; overflow:auto; }
+  #crash h3 { margin:0 0 6px; }
+  #crash p { margin:0 0 10px; color:var(--muted); font-size:13px; line-height:1.5; }
+  #crash pre { margin:0 0 10px; max-height:55%; overflow:auto; background:#0a0c12; border:1px solid var(--line); border-radius:8px;
+               padding:10px; font-size:12px; color:#f0b4a8; white-space:pre-wrap; user-select:text; }
+  #stage { position:relative; }
 
   .bar { display:flex; justify-content:space-between; align-items:center; margin-top:12px; gap:12px; flex-wrap:wrap; }
   .bar small { color:var(--muted); }
@@ -62,20 +64,15 @@
       <div><progress id="progress" hidden max="100" value="0"></progress></div>
       <div id="status"></div>
 
-      <details id="mods">
-        <summary>🎭 Mods</summary>
-        <div class="hint">Activá o desactivá los mods antes de tocar Jugar. Si ya estás jugando, recargá la página para cambiarlos.</div>
-        <div id="modList"></div>
-        <div class="hint" id="modMsg">Buscando mods…</div>
-      </details>
     </div>
 
     <div id="game">
       <div id="stage">
         <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+        <div id="crash"><h3>El juego se detuvo</h3><p>Copiá este texto y mandámelo para poder arreglarlo. Si no tiene detalles, recargá la página con <b>?debug=1</b> al final de la dirección y repetí lo que hiciste.</p><pre id="crashLog"></pre><button id="crashCopy" class="sec">Copiar texto</button> <button id="crashReload" class="sec">Recargar</button></div>
       </div>
       <div class="bar">
-        <small>Hacé clic en el juego para que tome el teclado. <span id="modInfo"></span></small>
+        <small>Hacé clic en el juego para que tome el teclado.</small>
         <span>
           <button id="fsBtn" class="sec">⛶ Pantalla completa</button>
         </span>
@@ -85,7 +82,7 @@
   </div>
 
 <script>
-  var BUILD_VERSION = '4';   // subí este número si publicás una compilación nueva
+  var BUILD_VERSION = '5';   // subí este número si publicás una compilación nueva
   var statusEl   = document.getElementById('status');
   var progressEl = document.getElementById('progress');
   var playBtn    = document.getElementById('playBtn');
@@ -152,66 +149,77 @@
   window.addEventListener('beforeunload', persistSaves);
 
   // ---------------------------------------------------------------------------
-  // Mods. Están dentro del juego, en /mods/<nombre>/ (con su mod.ini).
-  // Antes de arrancar el motor escribimos "Active=true/false" en cada mod.ini.
+  // Mods. Están dentro del juego (carpeta /mods) y se activan desde el menú del propio juego.
+  // Guardamos el mod.ini de cada mod para que lo que actives se acuerde al recargar.
   // ---------------------------------------------------------------------------
-  var modState = {};                    // nombre -> true/false
-  try { modState = JSON.parse(lsGet('sonic2:mods') || '{}') || {}; } catch (e) { modState = {}; }
-
-  function applyMods() {
-    var info = document.getElementById('modInfo');
-    var fs = getFS();
-    if (!fs) { if (info) info.textContent = '· Mods: no disponible'; return; }
-    var dirs = [];
-    try { dirs = fs.readdir('/mods').filter(function (n) { return n !== '.' && n !== '..'; }); } catch (e) { dirs = []; }
-    var report = [];
-    dirs.forEach(function (d) {
-      var path = '/mods/' + d + '/mod.ini', txt;
-      try { txt = fs.readFile(path, { encoding: 'utf8' }); } catch (e) { report.push(d + ' (sin mod.ini)'); return; }
-      var on = modState[d] !== false;                       // por defecto, activado
-      txt = txt.replace(/^[ \t]*Active[ \t]*=.*(\r?\n|$)/gmi, '');
-      fs.writeFile(path, 'Active=' + (on ? 'true' : 'false') + '\n' + txt);
-      report.push(d + (on ? ' (activo)' : ' (desactivado)'));
-    });
-    console.log('[mods] carpetas en /mods:', dirs);
-    if (info) info.textContent = report.length ? '· Mods: ' + report.join(', ') : '· Mods: ninguno incluido en esta compilación';
+  function modDirs(fs) {
+    try { return fs.readdir('/mods').filter(function (n) { return n !== '.' && n !== '..'; }); } catch (e) { return []; }
   }
-
-  // Lista de mods para el panel (la genera compilar.bat en mods.json)
-  fetch('mods.json?v=' + BUILD_VERSION).then(function (r) { return r.ok ? r.json() : []; }).then(function (list) {
-    var msg = document.getElementById('modMsg');
-    if (!Array.isArray(list) || !list.length) {
-      msg.textContent = 'No hay mods incluidos en esta compilación. Poné la carpeta del mod dentro de "mods" y volvé a ejecutar compilar.bat.';
-      return;
-    }
-    msg.textContent = '';
-    var box = document.getElementById('modList');
-    list.forEach(function (name) {
-      var lab = document.createElement('label');
-      var cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.checked = modState[name] !== false;
-      cb.addEventListener('change', function () {
-        modState[name] = cb.checked;
-        lsSet('sonic2:mods', JSON.stringify(modState));
-      });
-      lab.appendChild(cb);
-      lab.appendChild(document.createTextNode(name));
-      box.appendChild(lab);
+  function restoreMods() {
+    var fs = getFS();
+    if (!fs) return;
+    modDirs(fs).forEach(function (d) {
+      var saved = lsGet('sonic2:modini:' + d);
+      if (saved !== null) { try { fs.writeFile('/mods/' + d + '/mod.ini', saved); } catch (e) {} }
     });
-  }).catch(function () {
-    document.getElementById('modMsg').textContent = 'No se pudo leer mods.json (¿copiaste mods.json junto al index.html?).';
+  }
+  function persistMods() {
+    var fs = getFS();
+    if (!fs) return;
+    modDirs(fs).forEach(function (d) {
+      try {
+        var txt = fs.readFile('/mods/' + d + '/mod.ini', { encoding: 'utf8' });
+        if (lsGet('sonic2:modini:' + d) !== txt) lsSet('sonic2:modini:' + d, txt);
+      } catch (e) {}
+    });
+  }
+  setInterval(persistMods, 2000);
+  window.addEventListener('pagehide', persistMods);
+
+  // ---------------------------------------------------------------------------
+  // Aviso de error: si el juego se detiene mostramos los últimos mensajes para poder copiarlos
+  // ---------------------------------------------------------------------------
+  var logLines = [];
+  function pushLog(args) {
+    var t = Array.prototype.join.call(args, ' ');
+    logLines.push(t);
+    if (logLines.length > 80) logLines.shift();
+  }
+  var crashed = false;
+  function showCrash(reason) {
+    if (crashed) return;
+    crashed = true;
+    var st = document.getElementById('start');
+    if (st.style.display !== 'none') { st.style.display = 'none'; document.getElementById('game').style.display = 'block'; }
+    document.getElementById('crashLog').textContent = (reason ? 'Motivo: ' + reason + '\n\n' : '') + logLines.join('\n');
+    document.getElementById('crash').style.display = 'block';
+  }
+  window.addEventListener('error', function (e) { showCrash(e.message); });
+  window.addEventListener('unhandledrejection', function (e) { showCrash(String(e.reason && e.reason.message || e.reason)); });
+  document.getElementById('crashCopy').addEventListener('click', function () {
+    var t = document.getElementById('crashLog').textContent;
+    if (navigator.clipboard) navigator.clipboard.writeText(t).catch(function () {});
   });
+  document.getElementById('crashReload').addEventListener('click', function () { location.reload(); });
+
+  // ?debug=1 -> el motor escribe mensajes detallados (se guardan para el aviso de error)
+  var DEBUG = /[?&]debug=1/.test(location.search);
+  function writeDebugSettings() {
+    var fs = getFS();
+    if (!fs || !DEBUG) return;
+    try { fs.writeFile('/settings.ini', '[Dev]\nEngineDebugMode=true\n'); } catch (e) {}
+  }
 
   // ---------------------------------------------------------------------------
   // Configuración que Emscripten espera encontrar
   // ---------------------------------------------------------------------------
   var Module = {
     canvas: canvas,
-    preRun: [restoreSaves],
+    preRun: [restoreSaves, writeDebugSettings],
     locateFile: function (path) { return /\.wasm$/.test(path) ? path + '?v=' + BUILD_VERSION : path; },
-    print: function () { console.log.apply(console, arguments); },
-    printErr: function () { console.warn.apply(console, arguments); },
+    print: function () { pushLog(arguments); console.log.apply(console, arguments); },
+    printErr: function () { pushLog(arguments); console.warn.apply(console, arguments); },
+    onAbort: function (what) { showCrash(String(what)); },
     totalDependencies: 0,
     setStatus: function (text) {
       if (!text) { statusEl.textContent = ''; progressEl.hidden = true; return; }
@@ -233,7 +241,7 @@
         : 'Listo');
     },
     // Se ejecuta con todos los archivos ya cargados y antes de que arranque el motor
-    onRuntimeInitialized: function () { applyMods(); }
+    onRuntimeInitialized: function () { restoreMods(); }
   };
 
   // --- Audio: el navegador solo lo permite después de un clic ---
